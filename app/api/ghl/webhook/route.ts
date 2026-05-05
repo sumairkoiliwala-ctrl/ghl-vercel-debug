@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/auth";
 import { ghlRequest } from "@/lib/ghl";
+import {
+  associateContactToDeal,
+  upsertHubSpotContactFromGhl,
+  upsertHubSpotDealFromGhl
+} from "@/lib/hubspot";
 
 type AnyObject = Record<string, any>;
 
@@ -106,16 +111,63 @@ export async function POST(req: NextRequest) {
     console.log(JSON.stringify(opportunityDetails, null, 2));
     console.log("==============================================");
 
+    const ghlOpportunity =
+      (opportunityDetails as AnyObject).opportunity || selectedOpportunity;
+
+    const ghlContact =
+      ghlOpportunity.contact || selectedOpportunity.contact || payload;
+
+    const hubspotContactResult = await upsertHubSpotContactFromGhl({
+      email: ghlContact.email || payload.email,
+      firstName: payload.first_name || undefined,
+      lastName: payload.last_name || undefined,
+      fullName: ghlContact.name || payload.full_name,
+      phone: ghlContact.phone || payload.phone,
+      ghlContactId: ghlOpportunity.contactId || contactId,
+      ghlLocationId: ghlOpportunity.locationId || locationId
+    });
+
+    const hubspotDealResult = await upsertHubSpotDealFromGhl({
+      opportunityId: ghlOpportunity.id,
+      opportunityName: ghlOpportunity.name,
+      monetaryValue: ghlOpportunity.monetaryValue,
+      pipelineId: ghlOpportunity.pipelineId,
+      pipelineStageId: ghlOpportunity.pipelineStageId,
+      status: ghlOpportunity.status,
+      contactId: ghlOpportunity.contactId || contactId,
+      locationId: ghlOpportunity.locationId || locationId
+    });
+
+    const associationResult = await associateContactToDeal({
+      contactId: hubspotContactResult.contact.id,
+      dealId: hubspotDealResult.deal.id
+    });
+
+    console.log("========== HUBSPOT SYNC RESULT ==========");
+    console.log("Contact:", JSON.stringify(hubspotContactResult, null, 2));
+    console.log("Deal:", JSON.stringify(hubspotDealResult, null, 2));
+    console.log("Association:", JSON.stringify(associationResult, null, 2));
+    console.log("=========================================");
+
     return NextResponse.json({
       success: true,
-      message: "Webhook received and opportunity matched.",
-      contactId,
-      locationId,
-      matchedOpportunityId: selectedOpportunity.id,
-      matchedOpportunityStatus: selectedOpportunity.status,
-      matchedOpportunityName: selectedOpportunity.name,
-      matchedOpportunityValue: selectedOpportunity.monetaryValue,
-      opportunityDetails
+      message:
+        "Webhook received, opportunity matched, and HubSpot contact/deal synced.",
+      ghl: {
+        contactId,
+        locationId,
+        opportunityId: ghlOpportunity.id,
+        opportunityStatus: ghlOpportunity.status,
+        opportunityName: ghlOpportunity.name,
+        opportunityValue: ghlOpportunity.monetaryValue
+      },
+      hubspot: {
+        contactAction: hubspotContactResult.action,
+        contactId: hubspotContactResult.contact.id,
+        dealAction: hubspotDealResult.action,
+        dealId: hubspotDealResult.deal.id,
+        associationCreated: true
+      }
     });
   } catch (error) {
     console.error("Webhook Error:", error);
