@@ -12,7 +12,13 @@ import {
 type AnyObject = Record<string, any>;
 
 function getContactId(payload: AnyObject): string | null {
-  return payload.contact_id || payload.contactId || payload.contact?.id || null;
+  return (
+    payload.contact_id ||
+    payload.contactId ||
+    payload.contact?.id ||
+    payload.payment?.customer?.id ||
+    null
+  );
 }
 
 function getLocationId(payload: AnyObject): string | null {
@@ -44,6 +50,43 @@ function pickLatestWonOpportunity(opportunities: AnyObject[]) {
 
     return dateB - dateA;
   })[0];
+}
+
+function buildFallbackOpportunityFromPayment(params: {
+  payment: AnyObject;
+  contactId: string;
+  locationId: string;
+  payload: AnyObject;
+}) {
+  const { payment, contactId, locationId, payload } = params;
+
+  const firstLineItem = payment?.line_items?.[0];
+
+  const transactionId = payment?.transaction_id;
+  const productName = firstLineItem?.title || payment?.invoice?.name;
+  const customerName =
+    payment?.customer?.name || payload.full_name || "GHL Payment Customer";
+
+  return {
+    id: `payment_${transactionId}`,
+    name: productName ? `${customerName} - ${productName}` : customerName,
+    monetaryValue: payment?.total_amount || firstLineItem?.price || 0,
+    pipelineId: "",
+    pipelineStageId: "",
+    status:
+      String(payment?.payment_status || "").toLowerCase() === "succeeded"
+        ? "won"
+        : "open",
+    contactId,
+    locationId,
+    contact: {
+      id: contactId,
+      name: customerName,
+      email: payment?.customer?.email || payload.email,
+      phone: payment?.customer?.phone || payload.phone
+    },
+    isFallbackFromPayment: true
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -99,11 +142,36 @@ export async function POST(req: NextRequest) {
     );
     console.log("=============================================");
 
-    if (!selectedOpportunity?.id) {
+    let ghlOpportunity: AnyObject;
+
+    if (selectedOpportunity?.id) {
+      const opportunityDetails = await ghlRequest(
+        `/opportunities/${selectedOpportunity.id}`
+      );
+
+      console.log("========== FULL OPPORTUNITY DETAILS ==========");
+      console.log(JSON.stringify(opportunityDetails, null, 2));
+      console.log("==============================================");
+
+      ghlOpportunity =
+        (opportunityDetails as AnyObject).opportunity || selectedOpportunity;
+    } else if (payment?.transaction_id) {
+      console.log(
+        "No GHL opportunity found. Creating fallback HubSpot deal from payment transaction."
+      );
+
+      ghlOpportunity = buildFallbackOpportunityFromPayment({
+        payment,
+        contactId,
+        locationId,
+        payload
+      });
+    } else {
       return NextResponse.json(
         {
           success: false,
-          message: "No matching opportunity found for this contact.",
+          message:
+            "No matching opportunity found and no payment transaction available for fallback deal creation.",
           contactId,
           locationId,
           opportunitiesFound: opportunities.length
@@ -112,20 +180,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const opportunityDetails = await ghlRequest(
-      `/opportunities/${selectedOpportunity.id}`
-    );
-
-    console.log("========== FULL OPPORTUNITY DETAILS ==========");
-    console.log(JSON.stringify(opportunityDetails, null, 2));
-    console.log("==============================================");
-
-    const ghlOpportunity =
-      (opportunityDetails as AnyObject).opportunity || selectedOpportunity;
-
     const ghlContact =
       ghlOpportunity.contact ||
-      selectedOpportunity.contact ||
+      selectedOpportunity?.contact ||
       payment?.customer ||
       payload;
 
@@ -197,7 +254,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message:
-        "Webhook received, opportunity matched, and HubSpot contact/deal synced.",
+        "Webhook received, opportunity/payment matched, and HubSpot contact/deal synced.",
       ghl: {
         contactId,
         locationId,
@@ -205,6 +262,7 @@ export async function POST(req: NextRequest) {
         opportunityStatus: ghlOpportunity.status,
         opportunityName: ghlOpportunity.name,
         opportunityValue: ghlOpportunity.monetaryValue,
+        usedPaymentFallback: Boolean(ghlOpportunity.isFallbackFromPayment),
         paymentTransactionId: payment?.transaction_id || null,
         paymentTotalAmount: payment?.total_amount || null
       },
