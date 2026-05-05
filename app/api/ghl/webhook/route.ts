@@ -59,10 +59,13 @@ export async function POST(req: NextRequest) {
 
     const contactId = getContactId(payload);
     const locationId = getLocationId(payload);
+    const payment = payload.payment || null;
 
     console.log("========== GHL WEBHOOK RECEIVED ==========");
     console.log("Contact ID:", contactId);
     console.log("Location ID:", locationId);
+    console.log("Payment Transaction ID:", payment?.transaction_id || null);
+    console.log("Payment Total Amount:", payment?.total_amount || null);
     console.log("Full Payload:", JSON.stringify(payload, null, 2));
 
     if (!contactId || !locationId) {
@@ -121,14 +124,18 @@ export async function POST(req: NextRequest) {
       (opportunityDetails as AnyObject).opportunity || selectedOpportunity;
 
     const ghlContact =
-      ghlOpportunity.contact || selectedOpportunity.contact || payload;
+      ghlOpportunity.contact ||
+      selectedOpportunity.contact ||
+      payment?.customer ||
+      payload;
 
     const hubspotContactResult = await upsertHubSpotContactFromGhl({
-      email: ghlContact.email || payload.email,
-      firstName: payload.first_name || undefined,
-      lastName: payload.last_name || undefined,
-      fullName: ghlContact.name || payload.full_name,
-      phone: ghlContact.phone || payload.phone,
+      email: ghlContact.email || payment?.customer?.email || payload.email,
+      firstName:
+        payload.first_name || payment?.customer?.first_name || undefined,
+      lastName: payload.last_name || payment?.customer?.last_name || undefined,
+      fullName: ghlContact.name || payment?.customer?.name || payload.full_name,
+      phone: ghlContact.phone || payment?.customer?.phone || payload.phone,
       ghlContactId: ghlOpportunity.contactId || contactId,
       ghlLocationId: ghlOpportunity.locationId || locationId
     });
@@ -154,7 +161,8 @@ export async function POST(req: NextRequest) {
       opportunityName: ghlOpportunity.name,
       monetaryValue: ghlOpportunity.monetaryValue,
       contactId: ghlOpportunity.contactId || contactId,
-      locationId: ghlOpportunity.locationId || locationId
+      locationId: ghlOpportunity.locationId || locationId,
+      payment
     });
 
     const lineItemAssociationResult = await associateLineItemToDeal({
@@ -183,7 +191,9 @@ export async function POST(req: NextRequest) {
         opportunityId: ghlOpportunity.id,
         opportunityStatus: ghlOpportunity.status,
         opportunityName: ghlOpportunity.name,
-        opportunityValue: ghlOpportunity.monetaryValue
+        opportunityValue: ghlOpportunity.monetaryValue,
+        paymentTransactionId: payment?.transaction_id || null,
+        paymentTotalAmount: payment?.total_amount || null
       },
       hubspot: {
         contactAction: hubspotContactResult.action,

@@ -314,6 +314,48 @@ export async function associateContactToDeal(params: {
   );
 }
 
+export async function searchHubSpotLineItemByTransactionId(
+  ghlTransactionId: string
+) {
+  const result = await hubspotRequest<{
+    total: number;
+    results: Array<{
+      id: string;
+      properties: Record<string, string>;
+    }>;
+  }>("/crm/v3/objects/line_items/search", {
+    method: "POST",
+    body: {
+      filterGroups: [
+        {
+          filters: [
+            {
+              propertyName: "ghl_transaction_id",
+              operator: "EQ",
+              value: ghlTransactionId
+            }
+          ]
+        }
+      ],
+      properties: [
+        "name",
+        "price",
+        "quantity",
+        "amount",
+        "ghl_transaction_id",
+        "ghl_opportunity_id",
+        "ghl_contact_id",
+        "ghl_location_id",
+        "ghl_payment_status",
+        "ghl_last_synced_at"
+      ],
+      limit: 1
+    }
+  });
+
+  return result.results?.[0] || null;
+}
+
 export async function searchHubSpotLineItemByGhlOpportunityId(
   ghlOpportunityId: string
 ) {
@@ -342,6 +384,7 @@ export async function searchHubSpotLineItemByGhlOpportunityId(
         "price",
         "quantity",
         "amount",
+        "ghl_transaction_id",
         "ghl_opportunity_id",
         "ghl_contact_id",
         "ghl_location_id",
@@ -384,13 +427,15 @@ export async function upsertSinglePaidLineItemFromGhl(params: {
   monetaryValue?: number | string | null;
   contactId?: string | null;
   locationId?: string | null;
+  payment?: any;
 }) {
   const {
     opportunityId,
     opportunityName,
     monetaryValue,
     contactId,
-    locationId
+    locationId,
+    payment
   } = params;
 
   if (!opportunityId) {
@@ -399,21 +444,51 @@ export async function upsertSinglePaidLineItemFromGhl(params: {
     );
   }
 
-  const amount = Number(monetaryValue || 0);
+  const firstPaymentLineItem = payment?.line_items?.[0];
+
+  const transactionId = payment?.transaction_id || "";
+  const paymentStatus = payment?.payment_status || "paid";
+
+  const paymentLineItemName =
+    firstPaymentLineItem?.title ||
+    payment?.invoice?.name ||
+    opportunityName ||
+    `GHL Payment ${opportunityId}`;
+
+  const paymentPrice =
+    firstPaymentLineItem?.price ??
+    firstPaymentLineItem?.line_price ??
+    payment?.total_amount ??
+    monetaryValue ??
+    0;
+
+  const paymentQuantity = firstPaymentLineItem?.quantity ?? 1;
 
   const properties: Record<string, string> = {
-    name: opportunityName || `GHL Payment ${opportunityId}`,
-    quantity: "1",
-    price: String(amount),
+    name: String(paymentLineItemName),
+    quantity: String(paymentQuantity),
+    price: String(paymentPrice),
+    ghl_transaction_id: transactionId,
     ghl_opportunity_id: opportunityId,
-    ghl_contact_id: contactId || "",
+    ghl_contact_id: contactId || payment?.customer?.id || "",
     ghl_location_id: locationId || "",
-    ghl_payment_status: "paid",
+    ghl_payment_status:
+      String(paymentStatus).toLowerCase() === "succeeded"
+        ? "paid"
+        : String(paymentStatus),
     ghl_last_synced_at: new Date().toISOString()
   };
 
-  const existingLineItem =
-    await searchHubSpotLineItemByGhlOpportunityId(opportunityId);
+  let existingLineItem = null;
+
+  if (transactionId) {
+    existingLineItem = await searchHubSpotLineItemByTransactionId(transactionId);
+  }
+
+  if (!existingLineItem && !transactionId) {
+    existingLineItem =
+      await searchHubSpotLineItemByGhlOpportunityId(opportunityId);
+  }
 
   if (existingLineItem?.id) {
     const updatedLineItem = await updateHubSpotLineItem(
