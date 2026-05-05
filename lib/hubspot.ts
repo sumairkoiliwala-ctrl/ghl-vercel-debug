@@ -259,10 +259,17 @@ export async function upsertHubSpotDealFromGhl(params: {
     throw new Error("Cannot upsert HubSpot deal because GHL opportunity ID is missing.");
   }
 
-  const properties: Record<string, string> = {
-    dealname: opportunityName || `GHL Opportunity ${opportunityId}`,
-    amount: String(monetaryValue || 0),
-    ghl_opportunity_id: opportunityId,
+const isWon = String(status || "").toLowerCase() === "won";
+
+const properties: Record<string, string> = {
+  dealname: opportunityName || `GHL Opportunity ${opportunityId}`,
+  amount: String(monetaryValue || 0),
+  pipeline: process.env.HUBSPOT_DEAL_PIPELINE || "default",
+  dealstage: isWon
+    ? process.env.HUBSPOT_DEAL_STAGE_WON || "1078781196"
+    : "",
+  closedate: isWon ? new Date().toISOString() : "",
+  ghl_opportunity_id: opportunityId,
     ghl_contact_id: contactId || "",
     ghl_location_id: locationId || "",
     ghl_pipeline_id: pipelineId || "",
