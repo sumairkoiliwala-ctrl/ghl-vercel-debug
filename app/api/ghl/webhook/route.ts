@@ -156,35 +156,48 @@ export async function POST(req: NextRequest) {
       dealId: hubspotDealResult.deal.id
     });
 
-    const hubspotLineItemResult = await upsertSinglePaidLineItemFromGhl({
-      opportunityId: ghlOpportunity.id,
-      opportunityName: ghlOpportunity.name,
-      monetaryValue: ghlOpportunity.monetaryValue,
-      contactId: ghlOpportunity.contactId || contactId,
-      locationId: ghlOpportunity.locationId || locationId,
-      payment
-    });
+    let hubspotLineItemResult: any = null;
+    let lineItemAssociationResult: any = null;
 
-    const lineItemAssociationResult = await associateLineItemToDeal({
-      lineItemId: hubspotLineItemResult.lineItem.id,
-      dealId: hubspotDealResult.deal.id
-    });
+    if (payment?.transaction_id) {
+      hubspotLineItemResult = await upsertSinglePaidLineItemFromGhl({
+        opportunityId: ghlOpportunity.id,
+        opportunityName: ghlOpportunity.name,
+        monetaryValue: ghlOpportunity.monetaryValue,
+        contactId: ghlOpportunity.contactId || contactId,
+        locationId: ghlOpportunity.locationId || locationId,
+        payment
+      });
+
+      lineItemAssociationResult = await associateLineItemToDeal({
+        lineItemId: hubspotLineItemResult.lineItem.id,
+        dealId: hubspotDealResult.deal.id
+      });
+    }
 
     console.log("========== HUBSPOT SYNC RESULT ==========");
     console.log("Contact:", JSON.stringify(hubspotContactResult, null, 2));
     console.log("Deal:", JSON.stringify(hubspotDealResult, null, 2));
     console.log("Association:", JSON.stringify(associationResult, null, 2));
-    console.log("Line Item:", JSON.stringify(hubspotLineItemResult, null, 2));
-    console.log(
-      "Line Item Association:",
-      JSON.stringify(lineItemAssociationResult, null, 2)
-    );
+
+    if (hubspotLineItemResult) {
+      console.log("Line Item:", JSON.stringify(hubspotLineItemResult, null, 2));
+      console.log(
+        "Line Item Association:",
+        JSON.stringify(lineItemAssociationResult, null, 2)
+      );
+    } else {
+      console.log(
+        "Line Item: skipped because no payment transaction was present."
+      );
+    }
+
     console.log("=========================================");
 
     return NextResponse.json({
       success: true,
       message:
-        "Webhook received, opportunity matched, and HubSpot contact/deal/line item synced.",
+        "Webhook received, opportunity matched, and HubSpot contact/deal synced.",
       ghl: {
         contactId,
         locationId,
@@ -200,10 +213,10 @@ export async function POST(req: NextRequest) {
         contactId: hubspotContactResult.contact.id,
         dealAction: hubspotDealResult.action,
         dealId: hubspotDealResult.deal.id,
-        lineItemAction: hubspotLineItemResult.action,
-        lineItemId: hubspotLineItemResult.lineItem.id,
+        lineItemAction: hubspotLineItemResult?.action || "skipped",
+        lineItemId: hubspotLineItemResult?.lineItem?.id || null,
         associationCreated: true,
-        lineItemAssociationCreated: true
+        lineItemAssociationCreated: Boolean(lineItemAssociationResult)
       }
     });
   } catch (error) {
