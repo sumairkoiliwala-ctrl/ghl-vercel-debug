@@ -3,8 +3,10 @@ import { isAuthorized } from "@/lib/auth";
 import { ghlRequest } from "@/lib/ghl";
 import {
   associateContactToDeal,
+  associateLineItemToDeal,
   upsertHubSpotContactFromGhl,
-  upsertHubSpotDealFromGhl
+  upsertHubSpotDealFromGhl,
+  upsertSinglePaidLineItemFromGhl
 } from "@/lib/hubspot";
 
 type AnyObject = Record<string, any>;
@@ -28,7 +30,8 @@ function pickLatestWonOpportunity(opportunities: AnyObject[]) {
     return String(opp.status || "").toLowerCase() === "won";
   });
 
-  const listToSort = wonOpportunities.length > 0 ? wonOpportunities : opportunities;
+  const listToSort =
+    wonOpportunities.length > 0 ? wonOpportunities : opportunities;
 
   return listToSort.sort((a, b) => {
     const dateA = new Date(
@@ -87,7 +90,10 @@ export async function POST(req: NextRequest) {
 
     console.log("========== MATCHED GHL OPPORTUNITY ==========");
     console.log("Total opportunities found:", opportunities.length);
-    console.log("Selected opportunity:", JSON.stringify(selectedOpportunity, null, 2));
+    console.log(
+      "Selected opportunity:",
+      JSON.stringify(selectedOpportunity, null, 2)
+    );
     console.log("=============================================");
 
     if (!selectedOpportunity?.id) {
@@ -143,16 +149,34 @@ export async function POST(req: NextRequest) {
       dealId: hubspotDealResult.deal.id
     });
 
+    const hubspotLineItemResult = await upsertSinglePaidLineItemFromGhl({
+      opportunityId: ghlOpportunity.id,
+      opportunityName: ghlOpportunity.name,
+      monetaryValue: ghlOpportunity.monetaryValue,
+      contactId: ghlOpportunity.contactId || contactId,
+      locationId: ghlOpportunity.locationId || locationId
+    });
+
+    const lineItemAssociationResult = await associateLineItemToDeal({
+      lineItemId: hubspotLineItemResult.lineItem.id,
+      dealId: hubspotDealResult.deal.id
+    });
+
     console.log("========== HUBSPOT SYNC RESULT ==========");
     console.log("Contact:", JSON.stringify(hubspotContactResult, null, 2));
     console.log("Deal:", JSON.stringify(hubspotDealResult, null, 2));
     console.log("Association:", JSON.stringify(associationResult, null, 2));
+    console.log("Line Item:", JSON.stringify(hubspotLineItemResult, null, 2));
+    console.log(
+      "Line Item Association:",
+      JSON.stringify(lineItemAssociationResult, null, 2)
+    );
     console.log("=========================================");
 
     return NextResponse.json({
       success: true,
       message:
-        "Webhook received, opportunity matched, and HubSpot contact/deal synced.",
+        "Webhook received, opportunity matched, and HubSpot contact/deal/line item synced.",
       ghl: {
         contactId,
         locationId,
@@ -166,7 +190,10 @@ export async function POST(req: NextRequest) {
         contactId: hubspotContactResult.contact.id,
         dealAction: hubspotDealResult.action,
         dealId: hubspotDealResult.deal.id,
-        associationCreated: true
+        lineItemAction: hubspotLineItemResult.action,
+        lineItemId: hubspotLineItemResult.lineItem.id,
+        associationCreated: true,
+        lineItemAssociationCreated: true
       }
     });
   } catch (error) {

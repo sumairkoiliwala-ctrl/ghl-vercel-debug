@@ -256,20 +256,22 @@ export async function upsertHubSpotDealFromGhl(params: {
   } = params;
 
   if (!opportunityId) {
-    throw new Error("Cannot upsert HubSpot deal because GHL opportunity ID is missing.");
+    throw new Error(
+      "Cannot upsert HubSpot deal because GHL opportunity ID is missing."
+    );
   }
 
-const isWon = String(status || "").toLowerCase() === "won";
+  const isWon = String(status || "").toLowerCase() === "won";
 
-const properties: Record<string, string> = {
-  dealname: opportunityName || `GHL Opportunity ${opportunityId}`,
-  amount: String(monetaryValue || 0),
-  pipeline: process.env.HUBSPOT_DEAL_PIPELINE || "default",
-  dealstage: isWon
-    ? process.env.HUBSPOT_DEAL_STAGE_WON || "1078781196"
-    : "",
-  closedate: isWon ? new Date().toISOString() : "",
-  ghl_opportunity_id: opportunityId,
+  const properties: Record<string, string> = {
+    dealname: opportunityName || `GHL Opportunity ${opportunityId}`,
+    amount: String(monetaryValue || 0),
+    pipeline: process.env.HUBSPOT_DEAL_PIPELINE || "default",
+    dealstage: isWon
+      ? process.env.HUBSPOT_DEAL_STAGE_WON || "1078781196"
+      : "",
+    closedate: isWon ? new Date().toISOString() : "",
+    ghl_opportunity_id: opportunityId,
     ghl_contact_id: contactId || "",
     ghl_location_id: locationId || "",
     ghl_pipeline_id: pipelineId || "",
@@ -306,6 +308,141 @@ export async function associateContactToDeal(params: {
 
   return hubspotRequest(
     `/crm/v4/objects/contacts/${contactId}/associations/default/deals/${dealId}`,
+    {
+      method: "PUT"
+    }
+  );
+}
+
+export async function searchHubSpotLineItemByGhlOpportunityId(
+  ghlOpportunityId: string
+) {
+  const result = await hubspotRequest<{
+    total: number;
+    results: Array<{
+      id: string;
+      properties: Record<string, string>;
+    }>;
+  }>("/crm/v3/objects/line_items/search", {
+    method: "POST",
+    body: {
+      filterGroups: [
+        {
+          filters: [
+            {
+              propertyName: "ghl_opportunity_id",
+              operator: "EQ",
+              value: ghlOpportunityId
+            }
+          ]
+        }
+      ],
+      properties: [
+        "name",
+        "price",
+        "quantity",
+        "amount",
+        "ghl_opportunity_id",
+        "ghl_contact_id",
+        "ghl_location_id",
+        "ghl_payment_status",
+        "ghl_last_synced_at"
+      ],
+      limit: 1
+    }
+  });
+
+  return result.results?.[0] || null;
+}
+
+export async function createHubSpotLineItem(properties: Record<string, string>) {
+  return hubspotRequest<{
+    id: string;
+    properties: Record<string, string>;
+  }>("/crm/v3/objects/line_items", {
+    method: "POST",
+    body: { properties }
+  });
+}
+
+export async function updateHubSpotLineItem(
+  lineItemId: string,
+  properties: Record<string, string>
+) {
+  return hubspotRequest<{
+    id: string;
+    properties: Record<string, string>;
+  }>(`/crm/v3/objects/line_items/${lineItemId}`, {
+    method: "PATCH",
+    body: { properties }
+  });
+}
+
+export async function upsertSinglePaidLineItemFromGhl(params: {
+  opportunityId: string;
+  opportunityName: string;
+  monetaryValue?: number | string | null;
+  contactId?: string | null;
+  locationId?: string | null;
+}) {
+  const {
+    opportunityId,
+    opportunityName,
+    monetaryValue,
+    contactId,
+    locationId
+  } = params;
+
+  if (!opportunityId) {
+    throw new Error(
+      "Cannot upsert HubSpot line item because GHL opportunity ID is missing."
+    );
+  }
+
+  const amount = Number(monetaryValue || 0);
+
+  const properties: Record<string, string> = {
+    name: opportunityName || `GHL Payment ${opportunityId}`,
+    quantity: "1",
+    price: String(amount),
+    ghl_opportunity_id: opportunityId,
+    ghl_contact_id: contactId || "",
+    ghl_location_id: locationId || "",
+    ghl_payment_status: "paid",
+    ghl_last_synced_at: new Date().toISOString()
+  };
+
+  const existingLineItem =
+    await searchHubSpotLineItemByGhlOpportunityId(opportunityId);
+
+  if (existingLineItem?.id) {
+    const updatedLineItem = await updateHubSpotLineItem(
+      existingLineItem.id,
+      properties
+    );
+
+    return {
+      action: "updated",
+      lineItem: updatedLineItem
+    };
+  }
+
+  const createdLineItem = await createHubSpotLineItem(properties);
+
+  return {
+    action: "created",
+    lineItem: createdLineItem
+  };
+}
+
+export async function associateLineItemToDeal(params: {
+  lineItemId: string;
+  dealId: string;
+}) {
+  const { lineItemId, dealId } = params;
+
+  return hubspotRequest(
+    `/crm/v4/objects/line_items/${lineItemId}/associations/default/deals/${dealId}`,
     {
       method: "PUT"
     }
