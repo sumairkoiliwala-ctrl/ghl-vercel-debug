@@ -195,6 +195,7 @@ export async function searchHubSpotDealByGhlOpportunityId(
         "amount",
         "dealstage",
         "pipeline",
+        "closedate",
         "ghl_opportunity_id",
         "ghl_contact_id",
         "ghl_location_id",
@@ -261,16 +262,29 @@ export async function upsertHubSpotDealFromGhl(params: {
     );
   }
 
-  const isWon = String(status || "").toLowerCase() === "won";
+  /*
+    IMPORTANT:
+    GHL can send opportunity status as "open" even when the opportunity
+    is already in a closed/collected pipeline stage.
+
+    So we are NOT depending on:
+    status === "won"
+
+    For this integration, every deal that reaches this function is forced
+    into the HubSpot default pipeline and Closed Won stage.
+  */
+  const hubspotPipeline = process.env.HUBSPOT_DEAL_PIPELINE || "default";
+  const hubspotClosedWonStage =
+    process.env.HUBSPOT_DEAL_STAGE_WON || "1078781196";
 
   const properties: Record<string, string> = {
     dealname: opportunityName || `GHL Opportunity ${opportunityId}`,
     amount: String(monetaryValue || 0),
-    pipeline: process.env.HUBSPOT_DEAL_PIPELINE || "default",
-    dealstage: isWon
-      ? process.env.HUBSPOT_DEAL_STAGE_WON || "1078781196"
-      : "",
-    closedate: isWon ? new Date().toISOString() : "",
+
+    pipeline: hubspotPipeline,
+    dealstage: hubspotClosedWonStage,
+    closedate: new Date().toISOString(),
+
     ghl_opportunity_id: opportunityId,
     ghl_contact_id: contactId || "",
     ghl_location_id: locationId || "",
